@@ -111,6 +111,11 @@ public:
 	}
 
 	int textWidth(const std::string& str) {
+		int acc = 0;
+		for (char c : str) {
+			auto off = m_charOffsets[int(c)];
+			acc += (m_charAdvances[int(c)] - std::get<0>(off));
+		}
 		return str.size() * ((m_themeWidth / 16) + m_charSpacingX);
 	}
 
@@ -180,7 +185,7 @@ public:
 				tx = 0;
 				ty += (m_themeHeight / 16) + m_charSpacingY;
 			} else if (isspace(c) && c != '\n') {
-				tx += (m_themeWidth / 16) + m_charSpacingX;
+				tx += m_charAdvances[int(c)] - std::get<0>(m_charOffsets[int(c)]);
 			} else {
 				tx += drawChar(c, tx + x, ty + y, r, g, b);
 			}
@@ -331,26 +336,6 @@ private:
 	int m_charSpacingX{ -4 }, m_charSpacingY{ -2 }, m_patchPadding{ 5 };
 	
 	void clipPush(int x, int y, int w, int h) {
-		// if (!m_clips.empty()) {
-		// 	Rect b = m_clips.top();
-		// 	int minx = std::min(b.x, x);
-		// 	int maxx = std::max(b.x + b.width, x + w);
-		// 	if (maxx - minx < 1) {
-		// 		return;
-		// 	}
-
-		// 	int miny = std::min(b.y, y);
-		// 	int maxy = std::min(b.y + b.height, y + h);
-		// 	if (maxy - miny < 1) {
-		// 		return;
-		// 	}
-
-		// 	x = minx;
-		// 	y = miny;
-		// 	w = maxx - minx;
-		// 	h = maxy - miny;
-		// }
-
 		SDL_Rect rec = { x, y, w, h };
 		SDL_RenderSetClipRect(m_renderer, &rec);
 		m_clips.push(Rect(x, y, w, h));
@@ -477,7 +462,7 @@ using Widget = std::variant<
 	template<> \
 	bool onMouseEvent<T>(Device& dev, const MouseEvent& e, WID wid, T& w, const Context& ctx, UISystem* sys); \
 	template<> \
-	void onKeyEvent(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys) {}
+	void onKeyEvent<T>(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys) {}
 
 #define UI_DECLARE_WIDGET_KB(T) \
 	template<> \
@@ -487,7 +472,7 @@ using Widget = std::variant<
 	template<> \
 	bool onMouseEvent<T>(Device& dev, const MouseEvent& e, WID wid, T& w, const Context& ctx, UISystem* sys); \
 	template<> \
-	void onKeyEvent(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys);
+	void onKeyEvent<T>(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys);
 
 #define UI_WIDGET_DRAW_IMPL(T) \
 	template<> \
@@ -503,7 +488,7 @@ using Widget = std::variant<
 
 #define UI_WIDGET_KEY_EVENT_IMPL(T) \
 	template<> \
-	void internal::onKeyEvent(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys)
+	void internal::onKeyEvent<T>(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys)
 
 class UISystem;
 namespace internal {

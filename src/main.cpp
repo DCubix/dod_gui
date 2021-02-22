@@ -23,7 +23,7 @@ int main(int argc, const char** argv) {
 			.bottom = sys->create(Container{ .height = 50, .background = true }),
 			.left = sys->create(Container{ .width = 50, .background = true }),
 			.right = sys->create(Container{ .width = 50, .background = true }),
-			.center = sys->create(Container{ .background = true, .child = sys->create(Text{ .text = "The quick brown fox jumped over the lazy dog!" }) })
+			.center = sys->create(Container{ .background = true, .child = sys->create(Text{ .text = "The quick brown fox jumps over the lazy dog!" }) })
 		})
 	});
 
