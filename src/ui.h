@@ -2,7 +2,6 @@
 #define UI_H
 
 #include "sdl.h"
-#include "gui.h"
 
 #include <cstdint>
 #include <cctype>
@@ -49,29 +48,66 @@ struct Color {
 class Device {
 public:
 	Device(SDL_Window* window, SDL_Renderer* renderer) : m_window(window), m_renderer(renderer) {
-		SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_ABGR32);
-		SDL_LockSurface(surf);
-		uint8_t* pixels = (uint8_t*)surf->pixels;
-		for (int i = 0; i < width * height * 4; i+=4) {
-			uint8_t p[3];
-			HEADER_PIXEL(header_data, p);
-
-			pixels[i + 0] = 255U;
-			pixels[i + 1] = p[2];
-			pixels[i + 2] = p[1];
-			pixels[i + 3] = p[0];
-		}
-		SDL_UnlockSurface(surf);
-		SDL_SetColorKey(surf, 1, SDL_MapRGB(surf->format, 67, 165, 126));
-		m_theme = SDL_CreateTextureFromSurface(m_renderer, surf);
-		SDL_FreeSurface(surf);
-		
-		SDL_QueryTexture(m_theme, nullptr, nullptr, &m_themeWidth, &m_themeHeight);
 		SDL_StartTextInput();
 	}
 
 	~Device() {
 		SDL_DestroyTexture(m_theme);
+	}
+
+	/**
+	 * @brief  Loads a skin texture
+	 * @note   Must be in BMP format
+	 * @param  path: Image path
+	 * @retval None
+	 */
+	void loadSkin(const std::string& path) {
+		if (m_theme) {
+			SDL_DestroyTexture(m_theme);
+		}
+		m_charOffsets.clear();
+		m_charAdvances.clear();
+
+		SDL_Surface* surf = SDL_LoadBMP(path.c_str());
+		surf = SDL_ConvertSurfaceFormat(surf, SDL_PIXELFORMAT_RGB24, 0);
+
+		// Read char offsets (blue dots)
+		SDL_LockSurface(surf);
+		uint8_t* pixels = (uint8_t*)surf->pixels;
+
+		const int cellW = surf->w / 16;
+		const int cellH = surf->h / 16;
+		for (int ty = 0; ty < 16; ty++) {
+			for (int tx = 0; tx < 16; tx++) {
+				int tpx = tx * cellW,
+					tpy = ty * cellH;
+				
+				int fx = 0, fy = 0, ax = cellW;
+				for (int oy = 0; oy < cellH; oy++) {
+					for (int ox = 0; ox < cellW; ox++) {
+						int i = ((ox + tpx) + (oy + tpy) * surf->w) * 3;
+						if (pixels[i + 2] == 255 && pixels[i + 1] == 0 && pixels[i] == 0) {
+							pixels[i + 0] = 255;
+							fx = ox; fy = cellH - oy;
+						} else if (pixels[i + 2] == 0 && pixels[i + 1] == 255 && pixels[i] == 0) {
+							pixels[i + 0] = 255;
+							pixels[i + 1] = 0;
+							pixels[i + 2] = 255;
+							ax = ox;
+						}
+					}
+				}
+				m_charOffsets[tx + ty * 16] = std::make_pair(fx, fy);
+				m_charAdvances[tx + ty * 16] = ax;
+			}
+		}
+
+		SDL_UnlockSurface(surf);
+
+		SDL_SetColorKey(surf, 1, SDL_MapRGB(surf->format, 255, 0, 255));
+		m_theme = SDL_CreateTextureFromSurface(m_renderer, surf);
+		SDL_FreeSurface(surf);
+		SDL_QueryTexture(m_theme, nullptr, nullptr, &m_themeWidth, &m_themeHeight);
 	}
 
 	int textWidth(const std::string& str) {
@@ -96,14 +132,19 @@ public:
 		int sx = (int(c) % 16) * cellW;
 		int sy = (int(c) / 16) * cellH;
 
+		auto off = m_charOffsets[int(c)];
+
+		int cx = x - std::get<0>(off);
+		int cy = y + std::get<1>(off);
+
 		m_commands.push_back(Command{
 			.type = Command::CmdDraw,
-			.glyph = { x, y, cellW, cellH, sx, sy, cellW, cellH, r, g, b },
+			.glyph = { cx, cy, cellW, cellH, sx, sy, cellW, cellH, r, g, b },
 			.clip = { 0, 0, 0, 0 },
 			.order = m_currentOrder++
 		});
 
-		return cellW + m_charSpacingX;
+		return m_charAdvances[int(c)] - std::get<0>(off)/*  + m_charSpacingX */;
 	}
 
 	void drawTileSection(int index, int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, int rx, int ry, int rw, int rh) {
@@ -277,12 +318,14 @@ private:
 	std::vector<Command> m_commands;
 	std::stack<int> m_orderStack;
 	std::stack<Rect> m_clips;
+	std::map<uint8_t, std::pair<int, int>> m_charOffsets;
+	std::map<uint8_t, int> m_charAdvances;
 	int m_currentOrder{ 0 };
 
 	SDL_Renderer* m_renderer;
 	SDL_Window* m_window;
 
-	SDL_Texture* m_theme;
+	SDL_Texture* m_theme{ nullptr };
 	int m_themeWidth, m_themeHeight;
 
 	int m_charSpacingX{ -4 }, m_charSpacingY{ -2 }, m_patchPadding{ 5 };
