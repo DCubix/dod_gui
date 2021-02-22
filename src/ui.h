@@ -88,7 +88,7 @@ public:
 						int i = ((ox + tpx) + (oy + tpy) * surf->w) * 3;
 						if (pixels[i + 2] == 255 && pixels[i + 1] == 0 && pixels[i] == 0) {
 							pixels[i + 0] = 255;
-							fx = ox; fy = cellH - oy;
+							fx = ox; fy = cellH - 1 - oy;
 						} else if (pixels[i + 2] == 0 && pixels[i + 1] == 255 && pixels[i] == 0) {
 							pixels[i + 0] = 255;
 							pixels[i + 1] = 0;
