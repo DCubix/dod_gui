@@ -998,11 +998,12 @@ UI_WIDGET_BOUNDS_IMPL(Input) {
 }
 
 static void updateView(WID wid, Input& w, Device& dev, UISystem* sys) {
+	std::string text = w.masked ? std::string(w.text.size(), '*') : w.text;
 	Rect pb = sys->bounds(wid);
 	auto& cx = w.__cursor;
 	auto& vx = w.__viewx;
 	const int margin = dev.cellWidth();
-	int cursorX = (cx * (dev.cellWidth() + dev.charSpacingX())) - dev.cellWidth() / 2;
+	int cursorX = dev.textWidth(text.substr(0, w.__cursor)) - margin / 2;
 	if (cursorX-vx > pb.width-margin) vx = cursorX - (pb.width-margin);
 	else if (cursorX-vx < 0) vx = cursorX;
 }
