@@ -14,6 +14,8 @@
 #include <stack>
 #include <optional>
 #include <regex>
+#include <fstream>
+#include <streambuf>
 
 struct Rect {
 	int x{ 0 }, y{ 0 }, width{ 0 }, height{ 0 };
@@ -116,7 +118,7 @@ public:
 			auto off = m_charOffsets[int(c)];
 			acc += (m_charAdvances[int(c)] - std::get<0>(off));
 		}
-		return str.size() * ((m_themeWidth / 16) + m_charSpacingX);
+		return acc;
 	}
 
 	void debugRect(int x, int y, int w, int h) {
@@ -413,7 +415,6 @@ struct Root {
 struct Container {
 	int width{ 0 }, height{ 0 };
 	WID child;
-	int padding{ 5 };
 	bool background{ false };
 };
 
@@ -454,6 +455,9 @@ using Widget = std::variant<
 	Text, Button, Slider, Input
 >;
 
+#define STR(x) #x
+#define XSTR(x) STR(x)
+
 #define UI_DECLARE_WIDGET(T) \
 	template<> \
 	void draw<T>(Device& dev, WID wid, T& w, const Context& ctx, UISystem* sys); \
@@ -462,7 +466,9 @@ using Widget = std::variant<
 	template<> \
 	bool onMouseEvent<T>(Device& dev, const MouseEvent& e, WID wid, T& w, const Context& ctx, UISystem* sys); \
 	template<> \
-	void onKeyEvent<T>(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys) {}
+	void onKeyEvent<T>(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys) {} \
+	template<> \
+	std::string className<T>() { return XSTR(T); }
 
 #define UI_DECLARE_WIDGET_KB(T) \
 	template<> \
@@ -472,7 +478,9 @@ using Widget = std::variant<
 	template<> \
 	bool onMouseEvent<T>(Device& dev, const MouseEvent& e, WID wid, T& w, const Context& ctx, UISystem* sys); \
 	template<> \
-	void onKeyEvent<T>(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys);
+	void onKeyEvent<T>(Device& dev, const KeyboardEvent& e, WID wid, T& w, UISystem* sys); \
+	template<> \
+	std::string className<T>() { return XSTR(T); }
 
 #define UI_WIDGET_DRAW_IMPL(T) \
 	template<> \
@@ -505,6 +513,9 @@ namespace internal {
 	template<typename W>
 	Rect bounds(Device& dev, WID wid, W& w, const Context& ctx, UISystem* sys) { return Rect(0, 0, 1, 1); }
 
+	template<typename W>
+	std::string className() { return ""; }
+
 	UI_DECLARE_WIDGET(Root)
 	UI_DECLARE_WIDGET(Text)
 	UI_DECLARE_WIDGET(Button)
@@ -521,16 +532,25 @@ class UISystem {
 public:
 
 	template<typename W>
-	WID create(const W& w) {
+	WID create(const W& w, const std::string& name = "") {
 		WID id = m_current++;
 		m_widgets[id] = w;
+		if (!name.empty()) m_widgetNames[id] = name;
 		return id;
 	}
 
 	template<typename W>
-	std::optional<W&> get(WID id) {
-		if (m_widgets.find(id) == m_widgets.end()) return {};
-		return std::get<W>(m_widgets[id]);
+	W* get(WID id) {
+		if (m_widgets.find(id) == m_widgets.end()) return nullptr;
+		return &std::get<W>(m_widgets[id]);
+	}
+
+	template<typename W>
+	W* get(const std::string& name) {
+		for (auto& [k, v] : m_widgetNames) {
+			if (v == name) return &std::get<W>(m_widgets[k]);
+		}
+		return nullptr;
 	}
 
 	void draw(Device& dev, WID id, const Context& ctx) {
@@ -598,16 +618,265 @@ public:
 
 	WID focused{ 0 };
 
+	WID loadUI(const std::string& path) {
+		std::ifstream t(path);
+		std::string str((std::istreambuf_iterator<char>(t)),
+						std::istreambuf_iterator<char>());
+		m_uiDesc = str;
+		return uiParse();
+	}
+
 private:
 	WID m_current{ 1 };
 	std::map<WID, Widget> m_widgets;
 	std::map<WID, Rect> m_widgetBounds;
+	std::map<WID, std::string> m_widgetNames;
 
+	std::string m_uiDesc{};
+	char uiRead() {
+		if (m_uiDesc.empty()) return 0;
+		char c = m_uiDesc[0];
+		m_uiDesc.erase(0, 1);
+		return c;
+	}
+
+	std::string uiReadCount(int count) {
+		std::string acc = "";
+		for (int i = 0; i < count; i++) acc += uiRead();
+		uiCleanSpaces();
+		return acc;
+	}
+
+	char uiPeek() { return m_uiDesc[0]; }
+
+	void uiCleanSpaces() {
+		while (::isspace(uiPeek()) && uiPeek() != 0) uiRead();
+	}
+
+	float uiRead_Number() {
+		std::string acc = "";
+		while ((::isdigit(uiPeek()) || uiPeek() == '.') && uiPeek() != 0) {
+			acc += uiRead();
+		}
+		uiCleanSpaces();
+		return std::stof(acc);
+	}
+
+	bool uiRead_Bool() {
+		std::string id = uiRead_ID();
+		if (id == "true") return true;
+		return false;
+	}
+
+	std::string uiRead_ID() {
+		std::string acc = "";
+		while (::isalpha(uiPeek()) && uiPeek() != 0) {
+			acc += uiRead();
+		}
+		uiCleanSpaces();
+		return acc;
+	}
+
+	std::string uiRead_String() {
+		// assuming there's a quote
+		if (uiPeek() == '"') uiRead();
+		std::string acc = "";
+		while (uiPeek() != '"' && uiPeek() != 0) {
+			acc += uiRead();
+		}
+		uiRead();
+		uiCleanSpaces();
+		return acc;
+	}
+
+	std::string uiBeginParseWidget() {
+		uiCleanSpaces();
+
+		if (!::isalpha(uiPeek())) {
+			return "";
+		}
+
+		// Widget class
+		std::string cls = uiRead_ID();
+
+		// expect (
+		if (uiPeek() != '(') {
+			return "";
+		}
+		uiRead();
+		uiCleanSpaces();
+
+		return cls; // ok, ready to parse properties!
+	}
+
+	bool uiEndParseWidget() {
+		uiCleanSpaces();
+		// expect )
+		if (uiPeek() != ')') {
+			return false;
+		}
+		uiRead();
+		uiCleanSpaces();
+		return true; // ok, widget parsed successfully!
+	}
+
+	Color uiParseColor() {
+		uint8_t r, g, b;
+		if (uiPeek() == '#') {
+			uiRead();
+			if (!::isxdigit(uiPeek())) return Color{ .r = r, .g = g, .b = b };
+
+			r = std::stoi(uiReadCount(2), 0, 16);
+			if (!::isxdigit(uiPeek())) return Color{ .r = r, .g = g, .b = b };
+
+			g = std::stoi(uiReadCount(2), 0, 16);
+			if (!::isxdigit(uiPeek())) return Color{ .r = r, .g = g, .b = b };
+
+			b = std::stoi(uiReadCount(2), 0, 16);
+		} else {
+			uiBeginParseWidget();
+			if (!::isdigit(uiPeek())) return Color{ .r = r, .g = g, .b = b };
+
+			r = uint8_t(uiRead_Number());
+			if (uiPeek() != ',') return Color{ .r = r, .g = g, .b = b };
+			uiRead();
+			uiCleanSpaces();
+			if (!::isdigit(uiPeek())) return Color{ .r = r, .g = g, .b = b };
+			
+			g = uint8_t(uiRead_Number());
+			if (uiPeek() != ',') return Color{ .r = r, .g = g, .b = b };
+			uiRead();
+			uiCleanSpaces();
+			if (!::isdigit(uiPeek())) return Color{ .r = r, .g = g, .b = b };
+
+			b = uint8_t(uiRead_Number());
+			uiEndParseWidget();
+		}
+		return Color{ .r = r, .g = g, .b = b };
+	}
+
+	Alignment uiParseAlignment() {
+		Alignment ret = Alignment::Center;
+		std::string id = uiRead_ID();
+		if (id == "NEAR") ret = Alignment::Near;
+		else if (id == "CENTER") ret = Alignment::Center;
+		else if (id == "FAR") ret = Alignment::Far;
+		uiCleanSpaces();
+		return ret;
+	}
+
+	std::string uiReadProp() {
+		std::string id = uiRead_ID();
+		if (uiPeek() == ':') {
+			uiRead();
+			uiCleanSpaces();
+			return id;
+		}
+		return "";
+	}
+
+	std::string uiReadAllProps(const std::function<void(const std::string&)>& cb) {
+		std::string name = "";
+		while (uiPeek() != ')' && uiPeek() != 0) {
+			std::string id = uiReadProp();
+			if (id == "") continue;
+			if (id == "id") {
+				name = uiRead_String();
+				if (uiPeek() == ',') uiRead();
+				continue;
+			}
+			cb(id);
+			if (uiPeek() == ',') uiRead();
+		}
+		return name;
+	}
+
+	WID uiParse() {
+		std::string clas = uiBeginParseWidget();
+		if (clas.empty()) return 0;
+
+		/*
+		Root, Container, Layout, Column, Placement,
+	Text, Button, Slider, Input*/
+
+		WID ret = 0;
+		if (clas == internal::className<Text>()) {
+			Text w{};
+			auto name = uiReadAllProps([&](const std::string& id) {
+				if (id == "text") w.text = uiRead_String();
+				else if (id == "color") w.color = uiParseColor();
+				else if (id == "align") w.align = uiParseAlignment();
+			});
+			ret = create(w, name);
+		} else if (clas == internal::className<Root>()) {
+			Root w{};
+			auto name = uiReadAllProps([&](const std::string& id) {
+				if (id == "child") w.child = uiParse();
+			});
+			ret = create(w, name);
+		} else if (clas == internal::className<Placement>()) {
+			Placement w{};
+			auto name = uiReadAllProps([&](const std::string& id) {
+				if (id == "child") w.child = uiParse();
+				else if (id == "x") w.x = uiRead_Number();
+				else if (id == "y") w.y = uiRead_Number();
+			});
+			ret = create(w, name);
+		} else if (clas == internal::className<Container>()) {
+			Container w{};
+			auto name = uiReadAllProps([&](const std::string& id) {
+				if (id == "child") w.child = uiParse();
+				else if (id == "width") w.width = int(uiRead_Number());
+				else if (id == "height") w.height = int(uiRead_Number());
+				else if (id == "background") w.background = uiRead_Bool();
+			});
+			ret = create(w, name);
+		} else if (clas == internal::className<Layout>()) {
+			Layout w{};
+			auto name = uiReadAllProps([&](const std::string& id) {
+				if (id == "center") w.center = uiParse();
+				else if (id == "left") w.left = uiParse();
+				else if (id == "right") w.right = uiParse();
+				else if (id == "top") w.top = uiParse();
+				else if (id == "bottom") w.bottom = uiParse();
+			});
+			ret = create(w, name);
+		} else if (clas == internal::className<Button>()) {
+			Button w{};
+			auto name = uiReadAllProps([&](const std::string& id) {
+				if (id == "text") w.text = uiRead_String();
+				else if (id == "disabled") w.disabled = uiRead_Bool();
+			});
+			ret = create(w, name);
+		} else if (clas == internal::className<Input>()) {
+			Input w{};
+			auto name = uiReadAllProps([&](const std::string& id) {
+				if (id == "text") w.text = uiRead_String();
+				else if (id == "pattern") w.pattern = uiRead_String();
+				else if (id == "masked") w.masked = uiRead_Bool();
+				else if (id == "disabled") w.disabled = uiRead_Bool();
+			});
+			ret = create(w, name);
+		} else if (clas == internal::className<Slider>()) {
+			Slider w{};
+			auto name = uiReadAllProps([&](const std::string& id) {
+				if (id == "min") w.min = int(uiRead_Number());
+				else if (id == "max") w.max = int(uiRead_Number());
+				else if (id == "value") w.value = int(uiRead_Number());
+				else if (id == "disabled") w.disabled = uiRead_Bool();
+			});
+			ret = create(w, name);
+		} 
+		// TODO: Read Column (Parse Lists)
+		uiEndParseWidget();
+		return ret;
+	}
 };
 
 constexpr int SliderHeight = 16;
 constexpr int SliderThumbWidth = 16;
-constexpr int InputHeight = 22;
+// constexpr int InputHeight = 22;
+constexpr int GlobalPadding = 4;
 
 enum class UI_LayoutSide {
 	Top = 0,
@@ -699,11 +968,11 @@ UI_WIDGET_DRAW_IMPL(Input) {
 		dev.drawPatch(sys->focused == wid ? 5 : 4, pb.x, pb.y, pb.width, pb.height);
 	}
 
+	std::string text = w.masked ? std::string(w.text.size(), '*') : w.text;
 	int& vx = w.__viewx;
-	int cursorX = (w.__cursor * (dev.cellWidth() + dev.charSpacingX())) - dev.cellWidth() / 2;
+	int cursorX = dev.textWidth(text.substr(0, w.__cursor));
 
 	uint8_t shade = w.disabled ? 37 : 255;
-	std::string text = w.masked ? std::string(w.text.size(), '*') : w.text;
 
 	Rect tb(pb);
 	tb.pad(4, 2, 4, 2);
@@ -725,7 +994,7 @@ UI_WIDGET_DRAW_IMPL(Input) {
 }
 
 UI_WIDGET_BOUNDS_IMPL(Input) {
-	return Rect(ctx.bounds.x, ctx.bounds.y, ctx.bounds.width, InputHeight);
+	return ctx.bounds;
 }
 
 static void updateView(WID wid, Input& w, Device& dev, UISystem* sys) {
@@ -833,7 +1102,7 @@ UI_WIDGET_BOUNDS_IMPL(Text) {
 UI_WIDGET_DRAW_IMPL(Button) {
 	Rect pb = sys->bounds(wid);
 	Rect tb(pb);
-	tb.pad(10, 5, 10, 5);
+	tb.pad(GlobalPadding * 2, GlobalPadding, GlobalPadding * 2, GlobalPadding);
 
 	const int s = w.disabled ? 3 : w.state;
 	uint8_t shade = w.disabled ? 37 : 255;
@@ -885,9 +1154,11 @@ UI_WIDGET_BOUNDS_IMPL(Placement) {
 UI_WIDGET_DRAW_IMPL(Container) {
 	Rect pb = sys->bounds(wid);
 	Rect tb(pb);
-	tb.pad(w.padding, w.padding, w.padding, w.padding);
+	if (w.background) {
+		tb.pad(GlobalPadding, GlobalPadding, GlobalPadding, GlobalPadding);
+		dev.drawPatch(6, pb.x, pb.y, pb.width, pb.height);
+	}
 
-	if (w.background) dev.drawPatch(6, pb.x, pb.y, pb.width, pb.height);
 	if (w.child != 0) {
 		dev.clip(tb.x-1, tb.y-1, tb.width+2, tb.height+2);
 		sys->draw(dev, w.child, Context{ .bounds = tb });
@@ -901,7 +1172,7 @@ UI_WIDGET_BOUNDS_IMPL(Container) {
 	if (w.height <= 0) b.height = ctx.bounds.height;
 
 	Rect tb(b);
-	tb.pad(5, 5, 5, 5);
+	if (w.background) tb.pad(GlobalPadding, GlobalPadding, GlobalPadding, GlobalPadding);
 	if (w.child) sys->bounds(dev, w.child, Context{ .bounds = tb });
 	return b;
 }
@@ -1035,7 +1306,7 @@ UI_WIDGET_MOUSE_EVENT_IMPL(Container) {
 	if (w.child == 0) return false;
 	Rect pb = ctx.bounds;
 	Rect tb(pb);
-	tb.pad(5, 5, 5, 5);
+	tb.pad(GlobalPadding, GlobalPadding, GlobalPadding, GlobalPadding);
 
 	if (!tb.has(e.x, e.y)) return false;
 

@@ -1,0 +1,21 @@
+Root(
+	child: Placement(
+		x: 0.5,
+		y: 0.5,
+		child: Container(
+			width: 220,
+			height: 32,
+			background: true,
+			child: Layout(
+				center: Input(id: "name"),
+				right: Container(
+					width: 90,
+					child: Button(
+						id: "btn",
+						text: "Press Me!"
+					)
+				)
+			)
+		)
+	)
+)

@@ -1,0 +1,4 @@
+Text(
+	text: "Hello World!",
+	color: #F3C13E
+)
